@@ -261,14 +261,15 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         )
                         self.rmf_path_requested = True
 
-                    waypoint_leave_msg = _current_waypoint.t
-                    ros_waypoint_leave_time = (
-                        waypoint_leave_msg.sec
-                        + waypoint_leave_msg.nanosec / 1e9
-                    )
+                    waypoint_leave_msg = _current_waypoint.time
+                    # ros_waypoint_leave_time = (
+                    #     waypoint_leave_msg.sec
+                    #     + waypoint_leave_msg.nanosec / 1e9
+                    # )
+                    ros_waypoint_leave_time = waypoint_leave_msg
 
                     ros_now = self.node.get_clock().now().nanoseconds / 1e9
-                    next_mission_wait = (ros_waypoint_leave_time - ros_now)
+                    next_mission_wait = (ros_waypoint_leave_time.timestamp() - ros_now)
                 else:
                     # Prevent spinning out of control when paused
                     self._path_quit_cv.acquire()
@@ -303,14 +304,14 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         _next_waypoint = self.rmf_remaining_path_waypoints[-1]
 
                         # Grab graph indices
-                        if _next_waypoint.graph_index.has_value:
-                            _next_index = _next_waypoint.graph_index.value
+                        if _next_waypoint.graph_index is not None:
+                            _next_index = _next_waypoint.graph_index
                         else:
                             _next_index = None
 
-                        if _current_waypoint.graph_index.has_value:
+                        if _current_waypoint.graph_index is not None:
                             _current_index = (
-                                _current_waypoint.graph_index.value
+                                _current_waypoint.graph_index
                             )
                         else:
                             _current_index = None
@@ -329,7 +330,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         if not self.rmf_current_lane_index:
                             if _current_index is not None:
                                 self.rmf_current_lane_index = (
-                                    self.lane_dict.get((_current_index,
+                                    self.rmf_lane_dict.get((_current_index,
                                                         _next_index))
                                 )
 
@@ -510,12 +511,12 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
     def queue_move_coordinate_mission(self, mir_location):
         """Add a move mission to the mission queue, creating when needed."""
         mission_name = ('move_coordinate_to'
-                        f'_{mir_location.x:.3f}',
-                        f'_{mir_location.y:.3f}',
+                        f'_{mir_location.x:.3f},'
+                        f'_{mir_location.y:.3f},'
                         f'_{mir_location.yaw:.3f}')
-
+        print("Mission name = " + mission_name)
         # Get mission GUID. If missing, create one and save it.
-        mission_id = self.missions.get(
+        mission_id = self.mir_missions.get(
             mission_name, self.create_move_coordinate_mission(mir_location)
         )
 
@@ -529,16 +530,18 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                 '[{mir_location.x:3f}_{mir_location.y:.3f}]!'
             )
 
-    def create_move_coordinate_mission(self, mir_location, retries=10):
+    def create_move_coordinate_mission(self, mir_location, retries=10): # TO DO TEST
+        print("Creating mission")
         mission_name = ('move_coordinate_to'
-                        f'_{mir_location.x:.3f}',
-                        f'_{mir_location.y:.3f}',
+                        f'_{mir_location.x:.3f},'
+                        f'_{mir_location.y:.3f},'
                         f'_{mir_location.yaw:.3f}')
-
+        print("Mission name = " + mission_name)
         mission = PostMissions(
-            group_id='mirconst-guid-0000-0001-missiongroup',
+            group_id='mirconst-guid-0000-0012-missiongroup',
             name=mission_name,
             description='automatically created by mir fleet adapter',
+            session_id='e23dd9a6-0ebc-11ec-a45c-00012978618e'
         )
         response = self.mir_api.missions_post(mission)
         action = PostMissionActions(
@@ -563,7 +566,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         )
 
         # NOTE(CH3): Unsure if I should be doing this
-        self.missions[mission_name] = response.guid
+        self.mir_missions[mission_name] = response.guid
 
         return response.guid
 
@@ -633,7 +636,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                     return [0.0, 0.0, 0.0]
 
         mir_pos = [api_response.position.x, api_response.position.y]
-        mir_ori = api_response.position.yaw
+        mir_ori = api_response.position.orientation
 
         # Output is [x, y, yaw]
         if rmf:
@@ -667,33 +670,35 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                 return
 
         mir_pos = [api_response.position.x, api_response.position.y]
-        mir_ori = api_response.position.yaw
+        mir_ori = api_response.position.orientation
 
         rmf_pos = self.transforms['mir_to_rmf'].transform(mir_pos)
         rmf_ori = (math.radians(mir_ori % 360)
                    + self.transforms['mir_to_rmf'].get_rotation())
 
         rmf_3d_pos = [*rmf_pos, rmf_ori]
+       
+        print("Updating Position")
 
         # At waypoint
         # States: (0, 1, 0)
         if self.rmf_current_waypoint_index is not None:
-            self.rmf_updater.update_position(self.rmf_current_waypoint_index,
-                                             self.rmf_ori)
+            self.rmf_updater.update_current_waypoint(self.rmf_current_waypoint_index,
+                                             rmf_ori)
         # In Transit or Idle in Lane
         # States: (1, 0, 0), (1, 0, 1)
         elif self.rmf_current_lane_index is not None:
-            self.rmf_updater.update_position(rmf_3d_pos,
+            self.rmf_updater.update_current_lanes(rmf_3d_pos,
                                              self.rmf_current_lane_index)
         # In Transit, Unknown Lane
         # States: (0, 0, 1)
         elif self.rmf_target_waypoint_index is not None:  # In Unknown Lane
-            self.rmf_updater.update_position(rmf_3d_pos,
+            self.rmf_updater.update_off_grid_position(rmf_3d_pos,
                                              self.rmf_target_waypoint_index)
         # Lost or MiR Commanded
         # States: (0, 0, 0)
         else:
-            self.rmf_updater.update_position(self.rmf_map_name,
+            self.rmf_updater.update_lost_position(self.rmf_map_name,
                                              rmf_3d_pos)
 
         self.node.get_logger().info(f"Updated Position: pos: {rmf_pos} | "
@@ -748,7 +753,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         robot_state.name = self.name
 
         # NOTE(CH3): Presuming model here means robot model, not sim model
-        robot_state.model = "MiR100"
+        robot_state.model = "MiR200"
 
         if self.dry_run:
             self.robot_state = robot_state
@@ -758,8 +763,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             if api_response is None:
                 api_response = self.mir_api.status_get()
 
-            now_sec, now_ns = math.modf(
-                self.node.get_clock().now().seconds_nanoseconds())
+            now_sec, now_ns = self.node.get_clock().now().seconds_nanoseconds()
 
             # Populate Location message
             rmf_location = Location()

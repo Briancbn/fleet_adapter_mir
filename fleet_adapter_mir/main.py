@@ -7,9 +7,12 @@ import rclpy
 
 import rmf_adapter as adpt
 import rmf_adapter.vehicletraits as traits
+import rmf_adapter.battery as battery
 import rmf_adapter.geometry as geometry
 import rmf_adapter.graph as graph
 import rmf_adapter.plan as plan
+from collections import namedtuple
+import sys
 
 from functools import partial
 from pprint import pprint
@@ -69,20 +72,31 @@ def compute_transforms(rmf_coordinates, mir_coordinates, node=None):
     return transforms
 
 
-def create_fleet(config, mock):
+def create_fleet(config,nav_graph_path,delivery_condition,mock):
     """Create RMF Adapter, FleetUpdateHandle, and parse navgraph."""
     profile = traits.Profile(
-        geometry.make_final_convex_circle(
-            config['rmf_fleet']['profile']['radius']
+        geometry.make_final_convex_circle(config['rmf_fleet']['profile']['footprint']),
+        geometry.make_final_convex_circle(config['rmf_fleet']['profile']['vicinity'])
         )
-    )
     robot_traits = traits.VehicleTraits(
         linear=traits.Limits(*config['rmf_fleet']['limits']['linear']),
         angular=traits.Limits(*config['rmf_fleet']['limits']['angular']),
         profile=profile
     )
+    voltage = config['rmf_fleet']['battery_system']['voltage']
+    capacity = config['rmf_fleet']['battery_system']['capacity']
+    charging_current = config['rmf_fleet']['battery_system']['charging_current']
+    battery_sys = battery.BatterySystem.make(voltage,capacity,charging_current)
 
-    nav_graph = graph.parse_graph(config['map_path'], robot_traits)
+    mass = config['rmf_fleet']['mechanical_system']['mass']
+    moment = config['rmf_fleet']['mechanical_system']['moment_of_inertia']
+    friction = config['rmf_fleet']['mechanical_system']['friction_coefficient']
+    mech_sys = battery.MechanicalSystem.make(mass,moment,friction)
+    ambient_power_sys = battery.PowerSystem.make(
+        config['rmf_fleet']['ambient_system']['power'])
+    motion_sink = battery.SimpleMotionPowerSink(battery_sys,mech_sys)
+    ambient_sink = battery.SimpleDevicePowerSink(battery_sys, ambient_power_sys)
+    nav_graph = graph.parse_graph(nav_graph_path, robot_traits)
 
     # RMF_CORE Fleet Adapter: Manages delivery or loop requests
     if mock:
@@ -95,12 +109,26 @@ def create_fleet(config, mock):
 
     fleet_name = config['rmf_fleet']['name']
     fleet = adapter.add_fleet(fleet_name, robot_traits, nav_graph)
+    drain_battery = config['rmf_fleet']['account_for_battery_drain']
+    recharge_threshold = config['rmf_fleet']['recharge_threshold']
+    recharge_soc = config['rmf_fleet']['recharge_soc']
+    tool_sink = battery.SimpleDevicePowerSink(battery_sys,battery.PowerSystem.make(0))
+
+    ok = fleet.set_task_planner_params(
+        battery_sys,
+        motion_sink,
+        ambient_sink,
+        tool_sink,
+        recharge_threshold,
+        recharge_soc,
+        drain_battery)
+    assert ok, ("Unable to set task planner params")
 
     if delivery_condition is None:
         # Naively accept all delivery requests
-        fleet.accept_delivery_requests(lambda x: True)
+        fleet.accept_task_requests(lambda x: True)
     else:
-        fleet.accept_delivery_requests(delivery_condition)
+        fleet.accept_task_requests(delivery_condition)
 
     return adapter, fleet, fleet_name, profile, nav_graph
 
@@ -114,12 +142,13 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
         rmf_config = robot_config['rmf_config']
 
         configuration = mir100_client.Configuration()
-        configuration.username = mir_config['base_url']
-        configuration.host = mir_config['user']
+        configuration.host = mir_config['base_url'] # TODO Looks sketchy
+        configuration.username = mir_config['user'] 
         configuration.password = mir_config['password']
 
         api_client = mir100_client.ApiClient(configuration)
         api_client.default_headers['Accept-Language'] = 'en-US'
+#        api_client.default_headers['Aut'] = 'en-US     TODO' 
 
         # CONFIGURE HANDLE ====================================================
         robot = MiRCommandHandle(
@@ -138,9 +167,16 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
             with MiRRetryContext(robot):
                 _mir_status = robot.mir_api.status_get()
                 robot.mir_name = _mir_status.robot_name
-
+                #pprint(_mir_status)
                 robot.load_mir_missions()
                 robot.load_mir_positions()
+
+                MiRLocation = namedtuple("MiRLocation", ['x', 'y', 'yaw'])
+
+                mir_location = MiRLocation(x=19.347,
+                                            y=18.121,
+                                            yaw=-87.57237243652344)
+                robot.queue_move_coordinate_mission(mir_location)
         else:
             robot.mir_name = "DUMMY_ROBOT_FOR_DRY_RUN"
 
@@ -204,8 +240,32 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
 ###############################################################################
 # MAIN
 ###############################################################################
-def main(args, delivery_condition=None, mock=False):
+def main(argv=sys.argv, delivery_condition=None, mock=False):
+
+    # INIT RCL ================================================================
+    rclpy.init(args=argv) 
+    adpt.init_rclcpp() 
+    args_without_ros = rclpy.utilities.remove_ros_args(argv)
+    parser = argparse.ArgumentParser(
+        prog="fleet_adapter_mir",
+        description="Configure and spin up fleet adapters for MiR 100 robots "
+                    "that interface between the "
+                    "MiR REST API, ROS2, and rmf_core!"
+    )
+    parser.add_argument("-c", "--config_path", type=str, required=True,
+                        help="Input config.yaml file to process")
+    parser.add_argument("-m", "--mock", action='store_true',
+                        help="Init a mock adapter instead "
+                             "(does not require a schedule node, "
+                             "but can interface with the REST API)")
+    parser.add_argument("-d", "--dry-run", action='store_true',
+                        help="Run as dry run. For testing only. "
+                             "Sets mock to True and disables all REST calls.")
+    parser.add_argument("-n", "--nav_graph", type=str, required=True,
+                    help="Path to the nav_graph for this fleet adapter")
+    args = parser.parse_args(args_without_ros[1:])
     config_path = args.config_path
+    nav_graph_path = args.nav_graph
     mock = args.mock
     dry_run = args.dry_run  # For testing
 
@@ -221,12 +281,8 @@ def main(args, delivery_condition=None, mock=False):
     pprint(config)
     print()
 
-    # INIT RCL ================================================================
-    rclpy.init()
-    adpt.init_rclcpp()
-
     # INIT FLEET ==============================================================
-    adapter, fleet, fleet_name, profile, nav_graph = create_fleet(config,
+    adapter, fleet, fleet_name, profile, nav_graph = create_fleet(config,nav_graph_path,delivery_condition = delivery_condition,
                                                                   mock=mock)
 
     # INIT TRANSFORMS =========================================================
@@ -295,22 +351,6 @@ def main(args, delivery_condition=None, mock=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        prog="fleet_adapter_mir",
-        description="Configure and spin up fleet adapters for MiR 100 robots "
-                    "that interface between the "
-                    "MiR REST API, ROS2, and rmf_core!"
-    )
-    parser.add_argument("config_path", type=str,
-                        help="Input config.yaml file to process")
-    parser.add_argument("-m", "--mock", action='store_true',
-                        help="Init a mock adapter instead "
-                             "(does not require a schedule node, "
-                             "but can interface with the REST API)")
-    parser.add_argument("-d", "--dry-run", action='store_true',
-                        help="Run as dry run. For testing only. "
-                             "Sets mock to True and disables all REST calls.")
-    args = parser.parse_args()
 
     # Configure delivery condition ============================================
     # Return True if the delivery requrest should be honoured
@@ -318,5 +358,5 @@ if __name__ == "__main__":
     def delivery_condition(cpp_delivery_msg):
         return True
 
-    main(args,
+    main(sys.argv,
          delivery_condition=delivery_condition)
