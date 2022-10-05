@@ -12,21 +12,18 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name, ['mir_config.yaml']),
-    #     ('share/' + package_name, ['rosi_config.yaml']),
-    #     ('share/' + package_name, ['nav_graph.yaml'])
     ],
-    
-        
-    
+
+
+
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Eric Dong',
-    maintainer_email='eric.dongxx@gmail.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='Chen Bainian',
+    maintainer_email='chenbn@artc.a-star.edu.sg',
+    description='RMF Fleet adapter for MIR',
+    license='Apache 2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': ['main=fleet_adapter_mir.main:main'],
-                           
     },
 )

@@ -3,11 +3,12 @@
 <package format="3">
   <name>fleet_adapter_mir</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>RMF Fleet adapter for MIR</description>
   <maintainer email="eric.dongxx@gmail.com">rmf</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache 2.0</license>
 
   <exec_depend>rmf_fleet_adapter_python</exec_depend>
+  <exec_depend>mir100-client</exec_depend>
   
   <buildtool_depend>ament_cmake</buildtool_depend>
 
