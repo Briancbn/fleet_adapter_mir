@@ -898,6 +898,10 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         self.node.get_logger().info(str(self.rmf_graph.get_waypoint(graph_index)))
         return self.rmf_graph.get_waypoint(graph_index).map_name
 
+    def get_robot_state(self):
+        with self._update_mutex:
+            return robot_state
+
 
 ###############################################################################
 # HELPER FUNCTIONS AND CLASSES

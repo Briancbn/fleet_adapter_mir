@@ -311,7 +311,7 @@ def main(argv=sys.argv, delivery_condition=None, mock=False):
                 fleet_state.name = fleet_name
 
                 for robot in robots.values():
-                    fleet_state.robots.append(robot.robot_state)
+                    fleet_state.robots.append(robot.get_robot_state())
 
                 fleet_state_pub.publish(fleet_state)
             return f
