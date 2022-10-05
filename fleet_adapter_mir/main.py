@@ -109,6 +109,8 @@ def create_fleet(config,nav_graph_path,delivery_condition,mock):
 
     fleet_name = config['rmf_fleet']['name']
     fleet = adapter.add_fleet(fleet_name, robot_traits, nav_graph)
+
+    fleet.fleet_state_publish_period(None)
     drain_battery = config['rmf_fleet']['account_for_battery_drain']
     recharge_threshold = config['rmf_fleet']['recharge_threshold']
     recharge_soc = config['rmf_fleet']['recharge_soc']
@@ -130,10 +132,10 @@ def create_fleet(config,nav_graph_path,delivery_condition,mock):
     else:
         fleet.accept_task_requests(delivery_condition)
 
-    return adapter, fleet, fleet_name, profile, nav_graph
+    return adapter, fleet, fleet_name, profile, robot_traits, nav_graph
 
 
-def create_robot_command_handles(config, handle_data, dry_run=False):
+def create_robot_command_handles(config, handle_data, robot_traits, dry_run=False):
     robots = {}
 
     for robot_name, robot_config in config['robots'].items():
@@ -153,8 +155,10 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
         # CONFIGURE HANDLE ====================================================
         robot = MiRCommandHandle(
             name=robot_name,
+            model=handle_data['fleet_name'],
             node=handle_data['node'],
             rmf_graph=handle_data['graph'],
+            robot_traits=robot_traits,
             robot_state_update_frequency=rmf_config.get(
                 'robot_state_update_frequency', 1),
             dry_run=dry_run
@@ -162,23 +166,6 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
         robot.mir_api = mir100_client.DefaultApi(api_client)
         robot.transforms = handle_data['transforms']
         robot.rmf_map_name = rmf_config['start']['map_name']
-
-        if not dry_run:
-            with MiRRetryContext(robot):
-                _mir_status = robot.mir_api.status_get()
-                robot.mir_name = _mir_status.robot_name
-                #pprint(_mir_status)
-                robot.load_mir_missions()
-                robot.load_mir_positions()
-
-                MiRLocation = namedtuple("MiRLocation", ['x', 'y', 'yaw'])
-
-                mir_location = MiRLocation(x=19.347,
-                                            y=18.121,
-                                            yaw=-87.57237243652344)
-                robot.queue_move_coordinate_mission(mir_location)
-        else:
-            robot.mir_name = "DUMMY_ROBOT_FOR_DRY_RUN"
 
         robots[robot.name] = robot
 
@@ -196,7 +183,7 @@ def create_robot_command_handles(config, handle_data, dry_run=False):
             starts = plan.compute_plan_starts(
                 handle_data['graph'],
                 start_config['map_name'],
-                robot.get_position(rmf=True, as_dimensions=True),
+                robot.get_position(as_dimensions=True),
                 handle_data['adapter'].now()
             )
 
@@ -282,7 +269,7 @@ def main(argv=sys.argv, delivery_condition=None, mock=False):
     print()
 
     # INIT FLEET ==============================================================
-    adapter, fleet, fleet_name, profile, nav_graph = create_fleet(config,nav_graph_path,delivery_condition = delivery_condition,
+    adapter, fleet, fleet_name, profile, robot_traits, nav_graph = create_fleet(config, nav_graph_path,delivery_condition = delivery_condition,
                                                                   mock=mock)
 
     # INIT TRANSFORMS =========================================================
@@ -297,12 +284,11 @@ def main(argv=sys.argv, delivery_condition=None, mock=False):
                    'fleet_name': fleet_name,
                    'adapter': adapter,
                    'node': cmd_node,
-
-                   'graph': nav_graph,
                    'profile': profile,
+                   'graph': nav_graph,
                    'transforms': transforms}
 
-    robots = create_robot_command_handles(config, handle_data, dry_run=dry_run)
+    robots = create_robot_command_handles(config, handle_data, robot_traits, dry_run=dry_run)
 
     # CREATE NODE EXECUTOR ====================================================
     rclpy_executor = rclpy.executors.SingleThreadedExecutor()
