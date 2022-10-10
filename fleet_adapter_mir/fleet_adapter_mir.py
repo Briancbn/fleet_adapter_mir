@@ -624,7 +624,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         f'_{mir_location.yaw:.3f}')
         print("Mission name = " + mission_name)
         mission = PostMissions(
-            group_id='mirconst-guid-0000-0012-missiongroup',
+            group_id='mirconst-guid-0000-0001-missiongroup',
             name=mission_name,
             description='automatically created by mir fleet adapter',
             session_id=self.session_id
