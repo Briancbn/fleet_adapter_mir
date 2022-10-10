@@ -262,8 +262,16 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             self.rmf_robot_state_path_locations.append(_msg)
 
         if not self.dry_run:
-            status = PutStatus(state_id=MiRState.READY)
-            self.mir_api.status_put(status)
+            with self._update_mutex:
+                try:
+                    status = PutStatus(state_id=MiRState.READY)
+                    self.mir_api.status_put(status)
+
+                except ApiException as e:
+                    self.logger.warn('Exception when calling '
+                                     'DefaultApi->status_get: %s\n'
+                                     % e)
+                    return
 
         def path_following_closure():
             _current_waypoint = None
@@ -892,12 +900,17 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
     # INTERNAL UPDATE LOOP
     ##########################################################################
     def execute_updates(self, api_response=None):
-        if api_response is None:
-            api_response = self.mir_api.status_get()
+        try:
+            if api_response is None:
+                api_response = self.mir_api.status_get()
 
-        self.update_internal_robot_state(api_response=api_response)
-        self.update_internal_location_trackers()
-        self.update_position(api_response=api_response)
+            self.update_internal_robot_state(api_response=api_response)
+            self.update_internal_location_trackers()
+            self.update_position(api_response=api_response)
+        except ApiException as e:
+            self.logger.warn('Exception when calling '
+                                        'DefaultApi->status_get: %s\n'
+                                        % e)
 
         # self.state_update_timer.reset()
 
