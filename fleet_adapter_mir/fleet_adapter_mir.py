@@ -56,7 +56,8 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                  rmf_graph,
                  robot_traits,
                  robot_state_update_frequency=1,
-                 dry_run=False):
+                 dry_run=False,
+                 mtx=threading.Lock()):
         adpt.RobotCommandHandle.__init__(self)
 
         self.name = name  # Name of robot object in config yaml
@@ -132,7 +133,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         self._path_following_thread = None
         self._path_quit_event = threading.Event()
         self._path_quit_cv = threading.Condition()
-        self._update_mutex = threading.Lock()
+        self._update_mutex = mtx
 
         # Dock queue execution thread
         self._docking_thread = None
