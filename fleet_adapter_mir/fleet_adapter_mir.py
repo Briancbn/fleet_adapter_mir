@@ -51,6 +51,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
     def __init__(self,
                  name,
                  model,
+                 session_id,
                  node,
                  rmf_graph,
                  robot_traits,
@@ -60,6 +61,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
 
         self.name = name  # Name of robot object in config yaml
         self.model = model
+        self.session_id = session_id
         self.node = node
         self.robot_traits = robot_traits
         self.linear_velocity = robot_traits.linear.nominal_velocity
@@ -612,7 +614,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             group_id='mirconst-guid-0000-0012-missiongroup',
             name=mission_name,
             description='automatically created by mir fleet adapter',
-            session_id='e23dd9a6-0ebc-11ec-a45c-00012978618e'
+            session_id=self.session_id
         )
         response = self.mir_api.missions_post(mission)
         action = PostMissionActions(

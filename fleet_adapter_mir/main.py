@@ -156,6 +156,7 @@ def create_robot_command_handles(config, handle_data, robot_traits, dry_run=Fals
         robot = MiRCommandHandle(
             name=robot_name,
             model=handle_data['fleet_name'],
+            session_id=mir_config['session_id'],
             node=handle_data['node'],
             rmf_graph=handle_data['graph'],
             robot_traits=robot_traits,
