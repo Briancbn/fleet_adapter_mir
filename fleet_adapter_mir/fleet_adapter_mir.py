@@ -231,7 +231,11 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         self.rmf_path_requested = True
 
         # Obtain plan waypoints ===============================================
-        self.rmf_remaining_path_waypoints = copy.copy(waypoints)
+        waypoints = copy.copy(waypoints)
+
+        self.rmf_remaining_path_waypoints = [
+            (i, waypoints[i]) for i in range(len(waypoints))
+        ]
 
         # We reverse this list so that we can pop it instead of traversing
         # it using an index (which is more Pythonic)
@@ -900,7 +904,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
 
     def get_robot_state(self):
         with self._update_mutex:
-            return robot_state
+            return self.robot_state
 
 
 ###############################################################################

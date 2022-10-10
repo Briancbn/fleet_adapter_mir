@@ -194,7 +194,7 @@ def create_robot_command_handles(config, handle_data, robot_traits, dry_run=Fals
         start = starts[0]
 
         if start.lane is not None:  # If the robot is in a lane
-            robot.rmf_current_lane_index = start.lane.value
+            robot.rmf_current_lane_index = start.lane
             robot.rmf_current_waypoint_index = None
             robot.rmf_target_waypoint_index = None
         else:  # Otherwise, the robot is on a waypoint
