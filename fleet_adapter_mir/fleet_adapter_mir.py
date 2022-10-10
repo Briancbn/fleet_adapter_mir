@@ -1,6 +1,7 @@
 from rmf_fleet_msgs.msg import Location, RobotMode, RobotState
 
 import rmf_adapter as adpt
+import rclpy
 
 from mir100_client.rest import ApiException
 from mir100_client.models import PostMissionQueues, PostMissions, \
@@ -68,6 +69,9 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         self.linear_velocity = robot_traits.linear.nominal_velocity
         self.angular_velocity = robot_traits.rotational.nominal_velocity
         self.dry_run = dry_run  # For testing only. Disables REST calls.
+
+        # Logger name with model and robot name for ease of debugging
+        self.logger = rclpy.logging.get_logger(self.node.get_name() + '-' + model + '-' + name)
 
         self.paused = False
         self.paused_path = []
@@ -156,7 +160,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         self.paused = True
 
         if self.rmf_remaining_path_waypoints:
-            self.node.get_logger().info(
+            self.logger.info(
                 '[PAUSE] {self.name}: Current path saved!'
             )
 
@@ -174,7 +178,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                 self.rmf_remaining_path_waypoints = self.paused_path
                 self.paushed_path = []
 
-                self.node.get_logger().info(
+                self.logger.info(
                     '[RESUME] {self.name}: Saved path restored!'
                 )
         else:
@@ -220,7 +224,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         # Prevent repeat and needless logs
         if (old_state != MiRState.PAUSE
                 and self.robot_state.mode.mode != RobotMode.MODE_IDLE):
-            self.node.get_logger().info(
+            self.logger.info(
                 '[ABORT] {self.name}: Robot stop called!'
             )
 
@@ -283,7 +287,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                     else:
                         next_mission_wait = 0
                 else:
-                    print("Paused")
+                    self.logger.warn("Paused")
                     # Prevent spinning out of control when paused
                     self._path_quit_cv.acquire()
                     self._path_quit_cv.wait(1)
@@ -292,7 +296,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                 # CHECK FOR PRE-EMPT ==========================================
                 if self._path_quit_event.is_set():
                     self.clear()
-                    self.node.get_logger().info(
+                    self.logger.info(
                         '[ABORT] {self.name}: Pre-empted path following!'
                     )
                     return
@@ -312,7 +316,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         _, _current_waypoint = (
                             self.rmf_remaining_path_waypoints.pop()
                         )
-                        print("Previous waypoint reached")
+                        self.logger.info("Previous waypoint reached")
 
                         # END =====================================================
                         if not self.rmf_remaining_path_waypoints:  # We're done!
@@ -327,7 +331,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
 
                         # ASSIGN NEXT TARGET ======================================
                         else:
-                            print("Next point")
+                            self.logger.info("Next point")
                             # Use the new point as the next point
                             _next_path_index, _next_waypoint = (
                                 self.rmf_remaining_path_waypoints[-1]
@@ -357,7 +361,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                                 self.rmf_current_lane_index =self.rmf_lane_dict.get(
                                     (_current_index, _next_index)
                                 )
-                                print(f"Current Lane Index: {self.rmf_current_lane_index}, Current Index: {_current_index}, Next Index : {_next_index}")
+                                self.logger.info(f"Current Lane Index: {self.rmf_current_lane_index}, Current Index: {_current_index}, Next Index : {_next_index}")
                             else:
                                 _current_index = None
 
@@ -400,11 +404,11 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                                                    y=_mir_pos[1],
                                                    yaw=_mir_ori)
 
-                        print(f"RMF location x:{_next_waypoint.position[0]}"
+                        self.logger.info(f"RMF location x:{_next_waypoint.position[0]}"
                               f"y:{_next_waypoint.position[1]}")
-                        print(f'MiR location: {mir_location}')
+                        self.logger.info(f'MiR location: {mir_location}')
 
-                        print(f"RMF Index: {_next_waypoint.graph_index}")
+                        self.logger.info(f"RMF Index: {_next_waypoint.graph_index}")
 
                         self.mir_state = None
 
@@ -478,14 +482,14 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                         self.rmf_docking_requested = False
                         docking_finished_callback()
 
-                        self.node.get_logger().info(
+                        self.logger.info(
                             '[COMPLETE] Completed dock at: "{dock_name}"!'
                         )
                         return
                 else:
                     self.rmf_docking_requested = False
                     self.rmf_docking_executed = True
-                    self.node.get_logger().info(
+                    self.logger.info(
                         '[COMPLETE-DRYRUN] Completed dock at: "{dock_name}"!'
                     )
                     docking_finished_callback()
@@ -498,7 +502,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
 
                     self.clear()
 
-                    self.node.get_logger().info(
+                    self.logger.info(
                         '[ABORT] Pre-empted dock at: "{dock_name}"!'
                     )
                     return
@@ -538,10 +542,10 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
     ##########################################################################
     def load_mir_missions(self):
         if self.dry_run:
-            self.node.get_logger().info('{self.name}: DRY_RUN LOAD MISSIONS')
+            self.logger.info('{self.name}: DRY_RUN LOAD MISSIONS')
             return
 
-        self.node.get_logger().info('{self.name}: Retrieving MiR Missions...')
+        self.logger.info('{self.name}: Retrieving MiR Missions...')
         robot_missions_ls = self.mir_api.missions_get()
         for i in robot_missions_ls:
             if i.name not in self.mir_missions:
@@ -551,16 +555,16 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                     print("removing {}".format(i.name))
                     self.mir_api.missions_guid_delete(i.guid)
 
-        self.node.get_logger().info(
+        self.logger.info(
             f'retrieved {len(self.mir_missions)} missions'
         )
 
     def load_mir_positions(self):
         if self.dry_run:
-            self.node.get_logger().info('{self.name}: DRY_RUN LOAD POSITIONS')
+            self.logger.info('{self.name}: DRY_RUN LOAD POSITIONS')
             return
 
-        self.node.get_logger().info('{self.name}: Retrieving MiR Positions...')
+        self.logger.info('{self.name}: Retrieving MiR Positions...')
         count = 0
 
         for pos in self.mir_api.positions_get():
@@ -577,7 +581,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                     )
                     count += 1
 
-        self.node.get_logger().info(f'updated {count} positions')
+        self.logger.info(f'updated {count} positions')
 
     ##########################################################################
     # MISSION METHODS
@@ -599,7 +603,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             mission = PostMissionQueues(mission_id=mission_id)
             self.mir_api.mission_queue_post(mission)
         except KeyError:
-            self.node.get_logger().error(
+            self.logger.error(
                 '{self.name}: No mission to move coordinates to '
                 '[{mir_location.x:3f}_{mir_location.y:.3f}]!'
             )
@@ -634,7 +638,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             mission_id=response.guid,
             body=action
         )
-        self.node.get_logger().info(
+        self.logger.info(
             f'{self.name}: '
             f'Created mission to move coordinate to "{mir_location}"'
         )
@@ -657,7 +661,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             mission = PostMissionQueues(mission_id=mission_id)
             self.mir_api.mission_queue_post(mission)
         except KeyError:
-            self.node.get_logger().error(
+            self.logger.error(
                 f'{self.name}: No mission to dock to {dock_name}!'
             )
 
@@ -686,7 +690,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             body=action
         )
 
-        self.node.get_logger().info(
+        self.logger.info(
             f'created mission to move and dock to: "{dock_name}"'
         )
 
@@ -730,7 +734,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             else:
                 self.rmf_updater.update_position(self.rmf_map_name,
                                                  [0.0, 0.0, 0.0])
-                self.node.get_logger().info("[DRYRUN] Updated Position: "
+                self.logger.info("[DRYRUN] Updated Position: "
                                             "pos: [0, 0] | ori: [0]")
                 return
 
@@ -769,7 +773,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
         if self.next_arrival_updater:
             self.next_arrival_updater(rmf_3d_pos)
 
-        self.node.get_logger().info(f"Updated Position: pos: {rmf_pos} | "
+        self.logger.info(f"Updated Position: pos: {rmf_pos} | "
                                     f"ori: {rmf_ori}")
 
     def update_internal_location_trackers(self):
@@ -880,7 +884,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
                 self.node.get_clock().now().nanoseconds / 1e9
             )
         except ApiException as e:
-            self.node.get_logger().warn('Exception when calling '
+            self.logger.warn('Exception when calling '
                                         'DefaultApi->status_get: %s\n'
                                         % e)
 
@@ -902,7 +906,7 @@ class MiRCommandHandle(adpt.RobotCommandHandle):
             self.execute_updates()
 
     def get_map_name(self, graph_index):
-        self.node.get_logger().info(str(self.rmf_graph.get_waypoint(graph_index)))
+        self.logger.info(str(self.rmf_graph.get_waypoint(graph_index)))
         return self.rmf_graph.get_waypoint(graph_index).map_name
 
     def get_robot_state(self):
